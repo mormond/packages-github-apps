@@ -83,3 +83,6 @@ jobs:
           PASS=$(jq -r '.token' <<< "$INSTALLATION_ACCESS_TOKEN")
           
           echo "$PASS" | docker login -u "${{ secrets.APP_ID }}" --password-stdin ghcr.io  
+
+          docker pull ghcr.io/mormond/alpine
+          
