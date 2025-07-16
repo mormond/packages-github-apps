@@ -1,0 +1,85 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v4
+
+      # Runs a single command using the runners shell
+      - name: Run a one-line script
+        run: |
+          now=$(date +%s)
+          iat=$((${now} - 60)) # Issues 60 seconds in the past
+          exp=$((${now} + 600)) # Expires 10 minutes in the future
+
+          b64enc() { openssl base64 | tr -d '=' | tr '/+' '_-' | tr -d '\n'; }
+
+          header_json='{
+            "typ":"JWT",
+            "alg":"RS256"
+          }'
+
+          # Header encode
+          header=$( echo -n "${header_json}" | b64enc )
+          
+          payload_json="{
+              \"iat\":${iat},
+              \"exp\":${exp},
+              \"iss\":\"${{ secrets.CLIENT_ID }}\"
+          }"
+          # Payload encode
+          payload=$( echo -n "${payload_json}" | b64enc )
+
+          # Signature
+          header_payload="${header}"."${payload}"
+          
+          signature=$(
+              openssl dgst -sha256 -sign <(echo -n "${{ secrets.APP_KEY }}") \
+              <(echo -n "${header_payload}") | b64enc
+          )
+
+          # Create JWT
+          JWT="${header_payload}"."${signature}"
+
+          INST=$(curl -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $JWT" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/app/installations)
+          
+          if [ -z "$INST" ]; then
+            echo "No installations found or error fetching installations."
+            exit 1
+          fi
+          
+          INSTALL_ID=$(jq -r '.[].id' <<< "$INST")
+          
+          INSTALLATION_ACCESS_TOKEN=$(curl -X POST \
+             -H "Authorization: Bearer $JWT" \
+             -H "Accept: application/vnd.github+json" \
+             -H "X-GitHub-Api-Version: 2022-11-28" \
+             https://api.github.com/app/installations/$INSTALL_ID/access_tokens)
+                
+          PASS=$(jq -r '.token' <<< "$INSTALLATION_ACCESS_TOKEN")
+          
+          echo "$PASS" | docker login -u "${{ secrets.APP_ID }}" --password-stdin ghcr.io  
